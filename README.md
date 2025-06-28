@@ -1,65 +1,99 @@
-# Example Voting App
+# Estudo de Caso - Deploy: Aplicação de Votação no Ecossistema AWS
 
-A simple distributed application running across multiple Docker containers.
+### Desenvolvido por: [Rafael Henrique](https://github.com/rafaelhgreco) e [Mateus Stringuetti](https://github.com/Mstringacode)
 
-## Getting started
+Este documento detalha a arquitetura, configuração e processo de depuração para a implantação de uma aplicação de votação baseada em microserviços na Amazon Web Services (AWS) utilizando o Elastic Container Service (ECS) com Fargate.
 
-Download [Docker Desktop](https://www.docker.com/products/docker-desktop) for Mac or Windows. [Docker Compose](https://docs.docker.com/compose) will be automatically installed. On Linux, make sure you have the latest version of [Compose](https://docs.docker.com/compose/install/).
+---
 
-This solution uses Python, Node.js, .NET, with Redis for messaging and Postgres for storage.
+## 1. Contexto
 
-Run in this directory to build and run the app:
+O objetivo do projeto foi migrar uma aplicação de votação que rodava localmente com `docker-compose` para um ambiente em nuvem gerenciado e escalável, enfrentando desafios como configuração de rede, segurança e gerenciamento de serviços.
 
-```shell
-docker compose up
-```
+A aplicação é composta por:
 
-The `vote` app will be running at [http://localhost:8080](http://localhost:8080), and the `results` will be at [http://localhost:8081](http://localhost:8081).
+- **Frontend para votação (vote)**
+- **Backend de resultados (result)**
+- **Worker de processamento**
+- **Serviços de apoio: Redis e PostgreSQL**
 
-Alternately, if you want to run it on a [Docker Swarm](https://docs.docker.com/engine/swarm/), first make sure you have a swarm. If you don't, run:
+---
 
-```shell
-docker swarm init
-```
+## 2. Visão Geral da Arquitetura
 
-Once you have your swarm, in this directory run:
+### Serviços Públicos (Frontend)
 
-```shell
-docker stack deploy --compose-file docker-stack.yml vote
-```
+- **vote-service**: Interface web para votação.
+- **result-service**: Interface web para exibição dos resultados.
+- **Exposição via ALB (Application Load Balancer)** com health checks na rota `/`.
 
-## Run the app in Kubernetes
 
-The folder k8s-specifications contains the YAML specifications of the Voting App's services.
+### Serviços Internos (Backend)
 
-Run the following command to create the deployments and services. Note it will create these resources in your current namespace (`default` if you haven't changed it.)
+- **worker-service**: Processamento dos votos em background.
+- **postgres-service**: Armazenamento relacional.
+- **redis-service**: Fila em memória para votos temporários.
 
-```shell
-kubectl create -f k8s-specifications/
-```
+A comunicação entre os serviços se dá por meio de um **Network Load Balancer (NLB)** interno, que fornece pontos de acesso DNS estáveis.
 
-The `vote` web app is then available on port 31000 on each host of the cluster, the `result` web app is available on port 31001.
+---
 
-To remove them, run:
+## 3. Serviços AWS Utilizados
 
-```shell
-kubectl delete -f k8s-specifications/
-```
+- **ECS (Elastic Container Service)**: Orquestração de contêineres.
+- **Fargate**: Execução serverless das tarefas.
+- **ECR (Elastic Container Registry)**: Armazenamento de imagens Docker.
+- **IAM (LabRole)**: Permissões para ECS interagir com ECR, CloudWatch, ELB etc.
+- **CloudWatch Logs**: Monitoramento e depuração com logs por serviço.
+![Texto Alternativo](https://i.imgur.com/6ukHx3b.png)
+---
 
-## Architecture
+### 3.1 Serviços de Balanceamento
 
-![Architecture diagram](architecture.excalidraw.png)
+- **Application Load Balancer (ALB)**
+  - Porta 80
+  - Target Groups: `vote-target-group`, `result-target-group`
+  - Health check na rota `/`
 
-* A front-end web app in [Python](/vote) which lets you vote between two options
-* A [Redis](https://hub.docker.com/_/redis/) which collects new votes
-* A [.NET](/worker/) worker which consumes votes and stores them in…
-* A [Postgres](https://hub.docker.com/_/postgres/) database backed by a Docker volume
-* A [Node.js](/result) web app which shows the results of the voting in real time
+- **Network Load Balancer (NLB) - Interno**
+  - Porta 5432 para PostgreSQL
+  - Porta 6379 para Redis
 
-## Notes
+---
 
-The voting application only accepts one vote per client browser. It does not register additional votes if a vote has already been submitted from a client.
+### 3.2 Segurança (Security Groups)
 
-This isn't an example of a properly architected perfectly designed distributed app... it's just a simple
-example of the various types of pieces and languages you might see (queues, persistent data, etc), and how to
-deal with them in Docker at a basic level.
+- **voting-app-alb-sg**: Permite HTTP (porta 80) de qualquer IP.
+- **voting-app-tasks-sg**:
+  - Porta 80: Acesso apenas do ALB
+  - Porta 5432 e 6379: Comunicação interna entre tarefas
+
+---
+
+## 4. Dificuldades de Implementação e Soluções
+
+| Problema                     | Sintoma                                      | Causa Raiz                                           | Solução                                                   |
+|-----------------------------|----------------------------------------------|------------------------------------------------------|-----------------------------------------------------------|
+| Descoberta de Serviço       | `Waiting for db`, `Name or service not known`| Nomes hard-coded (`db`, `redis`) sem DNS válido      | Criação de NLB com endpoints DNS internos                 |
+| Código Hard-coded           | Conexões ainda falhando                      | Endereços fixos no código                            | Uso de variáveis de ambiente (`POSTGRES_HOST`, etc)      |
+| Definição de Tarefa         | Configurações não aplicadas                  | Variáveis ausentes nas definições de tarefa          | Atualização das definições ECS com variáveis necessárias |
+| Regras de Firewall/SG       | Timeout e falha nos health checks            | Regras mal configuradas                              | Ajuste completo dos SGs de entrada e saída                |
+| Ciclo de Deploy             | Alterações sem efeito                        | Imagens antigas no ECR, tarefas não reiniciadas      | Rebuild com `--no-cache`, push e `Force new deployment`  |
+| Bugs de Reconexão           | Worker não reconectava                       | Reconexão com host fixo                              | Uso das variáveis de ambiente para reconectar            |
+| Falha em Health Check       | Result caía com erro 500                     | Rota `/` quebrava por erro no `sendFile`             | Substituição por `res.status(200).send("OK")` temporária |
+
+---
+
+## 5. Conclusão Final
+
+A implantação bem-sucedida foi alcançada através de uma abordagem sistemática que envolveu ajustes em:
+
+- Infraestrutura de rede (ALB/NLB)
+- Segurança (Security Groups)
+- Código-fonte (uso de variáveis de ambiente)
+- Processo de deploy (build, push, atualização de tarefas)
+
+A experiência reforça a importância de evitar configurações hard-coded e adotar um pipeline de implantação confiável e testável.
+
+---
+
