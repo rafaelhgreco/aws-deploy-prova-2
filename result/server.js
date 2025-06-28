@@ -1,6 +1,7 @@
 var express = require('express'),
     async = require('async'),
     { Pool } = require('pg'),
+    path = require('path'),
     cookieParser = require('cookie-parser'),
     app = express(),
     server = require('http').Server(app),
@@ -17,8 +18,17 @@ io.on('connection', function (socket) {
   });
 });
 
+// 1. Pegar os detalhes da conexão a partir das variáveis de ambiente
+const dbHost = process.env.POSTGRES_HOST;
+const dbUser = process.env.POSTGRES_USER;
+const dbPassword = process.env.POSTGRES_PASSWORD;
+
+// 2. Construir a connection string dinamicamente
+const connectionString = `postgres://${dbUser}:${dbPassword}@${dbHost}/postgres`;
+
+// 3. Criar o Pool de conexões com a string correta
 var pool = new Pool({
-  connectionString: 'postgres://postgres:postgres@db/postgres'
+  connectionString: connectionString
 });
 
 async.retry(
@@ -36,7 +46,20 @@ async.retry(
       return console.error("Giving up");
     }
     console.log("Connected to db");
-    getVotes(client);
+    
+    // --- ALTERAÇÃO APLICADA AQUI ---
+    // Garante que a tabela 'votes' exista antes de começar a ler dela.
+    const createTableQuery = 'CREATE TABLE IF NOT EXISTS votes (id VARCHAR(255) NOT NULL UNIQUE, vote VARCHAR(255) NOT NULL)';
+    client.query(createTableQuery, function(err, result) {
+      if (err) {
+        console.error("Error creating table 'votes':", err);
+        return; // Para a execução se a tabela não puder ser criada
+      }
+      console.log("Table 'votes' is ready or already exists.");
+      // Inicia o loop para buscar os votos APENAS DEPOIS de garantir que a tabela existe.
+      getVotes(client);
+    });
+    // --- FIM DA ALTERAÇÃO ---
   }
 );
 
@@ -49,7 +72,8 @@ function getVotes(client) {
       io.sockets.emit("scores", JSON.stringify(votes));
     }
 
-    setTimeout(function() {getVotes(client) }, 1000);
+    // Agenda a próxima verificação, mesmo que a consulta atual tenha falhado
+    setTimeout(function() { getVotes(client) }, 1000);
   });
 }
 
@@ -64,7 +88,7 @@ function collectVotesFromResult(result) {
 }
 
 app.use(cookieParser());
-app.use(express.urlencoded());
+app.use(express.urlencoded({extended: true})); // Adicionado 'extended: true' para remover o aviso de 'deprecated'
 app.use(express.static(__dirname + '/views'));
 
 app.get('/', function (req, res) {

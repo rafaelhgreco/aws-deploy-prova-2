@@ -16,8 +16,17 @@ namespace Worker
         {
             try
             {
-                var pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
-                var redisConn = OpenRedisConnection("redis");
+                var dbHost = Environment.GetEnvironmentVariable("POSTGRES_HOST");
+                var dbUser = Environment.GetEnvironmentVariable("POSTGRES_USER");
+                var dbPass = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD");
+                var redisHost = Environment.GetEnvironmentVariable("REDIS_HOST");
+                
+                // Construir a string de conexão dinamicamente
+                var connectionString = $"Server={dbHost};Username={dbUser};Password={dbPass};";
+                
+                // Chamar as funções com os valores corretos
+                var pgsql = OpenDbConnection(connectionString);
+                var redisConn = OpenRedisConnection(redisHost);
                 var redis = redisConn.GetDatabase();
 
                 // Keep alive is not implemented in Npgsql yet. This workaround was recommended:
@@ -30,11 +39,12 @@ namespace Worker
                 {
                     // Slow down to prevent CPU spike, only query each 100ms
                     Thread.Sleep(100);
-
+                
                     // Reconnect redis if down
                     if (redisConn == null || !redisConn.IsConnected) {
                         Console.WriteLine("Reconnecting Redis");
-                        redisConn = OpenRedisConnection("redis");
+                        // CORREÇÃO: Use a variável redisHost
+                        redisConn = OpenRedisConnection(redisHost); 
                         redis = redisConn.GetDatabase();
                     }
                     string json = redis.ListLeftPopAsync("votes").Result;
@@ -46,7 +56,8 @@ namespace Worker
                         if (!pgsql.State.Equals(System.Data.ConnectionState.Open))
                         {
                             Console.WriteLine("Reconnecting DB");
-                            pgsql = OpenDbConnection("Server=db;Username=postgres;Password=postgres;");
+                            // CORREÇÃO: Use a variável connectionString
+                            pgsql = OpenDbConnection(connectionString);
                         }
                         else
                         { // Normal +1 vote requested
