@@ -1,7 +1,7 @@
 # Estudo de Caso - Deploy: Aplicação de Votação no Ecossistema AWS
 
 ### Desenvolvido por: [Rafael Henrique](https://github.com/rafaelhgreco) e [Mateus Stringuetti](https://github.com/Mstringacode)
-
+### [Vídeo Pitch](https://www.youtube.com/watch?v=x_9FeVdQWXY) / [Vídeo Completo da Infraestrutura](https://youtu.be/5UdtWNGL64Q)
 Este documento detalha a arquitetura, configuração e processo de depuração para a implantação de uma aplicação de votação baseada em microserviços na Amazon Web Services (AWS) utilizando o Elastic Container Service (ECS) com Fargate.
 
 ---
